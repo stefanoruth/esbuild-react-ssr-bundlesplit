@@ -2,26 +2,46 @@ import express from 'express'
 import path from 'path'
 import fs from 'fs/promises'
 import { App } from '../app'
-import { renderToString, renderToStaticMarkup } from 'react-dom/server'
 import { StaticRouter } from 'react-router-dom/server'
 import { FetchClient, FetchContext, memCache } from '@stefanoruth/fetch-hooks'
-import { getInitialState } from '@stefanoruth/fetch-hooks/server'
-import { renderToStaticNodeStream, renderToNodeStream, renderToPipeableStream } from 'react-dom/server'
+// import { getInitialState } from '@stefanoruth/fetch-hooks/server'
+import { renderToStaticNodeStream, renderToPipeableStream } from 'react-dom/server'
+import { ReactElement } from 'react'
 
 const app = express()
 
 app.use('/assets', express.static(path.join(__dirname, '../../dist/client')))
 
-function streamToString(stream: NodeJS.ReadableStream): Promise<string> {
-    const chunks: Buffer[] = []
+export async function getInitialState(options: { App: ReactElement; client: FetchClient }): Promise<any> {
+    const { App, client } = options
+
+    client.ssrMode = true
+
+    await streamToString(renderToStaticNodeStream(App))
+
+    if (client.ssrPromises.length > 0) {
+        await Promise.all(client.ssrPromises)
+        // clear promises
+        client.ssrPromises = []
+
+        // recurse there may be dependant queries
+        return getInitialState(options)
+    } else {
+        return client.getInitialState()
+    }
+}
+
+function streamToString(stream: NodeJS.ReadableStream) {
     return new Promise((resolve, reject) => {
-        stream.on('data', chunk => chunks.push(Buffer.from(chunk)))
-        stream.on('error', err => reject(err))
-        stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+        stream.on('data', chunk => {
+            // Do nothing.
+        })
+        stream.on('error', reject)
+        stream.on('end', resolve)
     })
 }
 
-app.use('/favicon.ico', (req, res) => res.status(404).end())
+app.use('/favicon.ico', (req, res) => res.end())
 
 app.use(async (req, res, next) => {
     if (req.method !== 'GET') {
@@ -51,32 +71,27 @@ app.use(async (req, res, next) => {
 
         const initialStateScript = `window.__INITIAL_STATE__=${JSON.stringify(initialState).replace(/</g, '\\u003c')};`
 
-        console.log(manifest.main.js)
-
+        let didError = false
         const { pipe } = renderToPipeableStream(serverApp, {
             bootstrapScriptContent: initialStateScript,
             bootstrapModules: [manifest.main.js],
-            onAllReady: async () => {
-                //     res.write(` <html lang="en">
-                // <head>
-                //     <meta charSet="UTF-8" />
-                //     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-                //     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                //     <title>ESBuild - React - TypeScript - SSR - BundleSplit</title>
-                // </head>
-                // <body><div id="app">`)
-
-                // res.write('<div id="app">')
-
+            onShellReady: async () => {
+                res.setHeader('content-type', 'text/html')
+                res.status(didError ? 500 : 200)
                 pipe(res)
-
-                // res.write('</>')
-                // res.end()
-
-                //                 res.write(`</div>
-                //     </body>
-                // </html>`)
-                //                 res.end()
+            },
+            onShellError(error) {
+                // console.error(error)l
+                res.statusCode = 500
+                res.setHeader('content-type', 'text/html')
+                res.send('<h1>Something went wrong</h1>')
+            },
+            onError(error) {
+                console.error(error)
+                didError = true
+                res.statusCode = 500
+                res.setHeader('content-type', 'text/html')
+                res.send('<h1>Something went wrong</h1>')
             },
         })
     } catch (error) {

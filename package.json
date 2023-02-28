@@ -39,5 +39,12 @@
         "bracketSpacing": true,
         "arrowParens": "avoid",
         "printWidth": 120
+    },
+    "nodemonConfig": {
+        "ext": "ts,tsx",
+        "exec": "yarn dev",
+        "watch": [
+            "src/**"
+        ]
     }
 }
