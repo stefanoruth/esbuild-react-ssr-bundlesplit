@@ -1,7 +1,7 @@
 import express from 'express'
 import path from 'path'
 import fs from 'fs/promises'
-import { App } from '../app'
+import { App, ServerConfig, ServerConfigContext } from '../app'
 import { StaticRouter } from 'react-router-dom/server'
 import { FetchClient, FetchContext, memCache } from '@stefanoruth/fetch-hooks'
 // import { getInitialState } from '@stefanoruth/fetch-hooks/server'
@@ -12,7 +12,7 @@ const app = express()
 
 app.use('/assets', express.static(path.join(__dirname, '../../dist/client')))
 
-export async function getInitialState(options: { App: ReactElement; client: FetchClient }): Promise<any> {
+export async function getInitialState(options: { App: ReactElement; client: FetchClient }): Promise<object> {
     const { App, client } = options
 
     client.ssrMode = true
@@ -59,39 +59,51 @@ app.use(async (req, res, next) => {
             (await fs.readFile(path.join(__dirname, '../client/manifest.json'))).toString('utf-8')
         )
 
+        const context: ServerConfig = {}
+
         const serverApp = (
-            <FetchContext.Provider value={fetchClient}>
-                <StaticRouter location={req.originalUrl}>
-                    <App />
-                </StaticRouter>
-            </FetchContext.Provider>
+            <ServerConfigContext.Provider value={context}>
+                <FetchContext.Provider value={fetchClient}>
+                    <StaticRouter location={req.originalUrl}>
+                        <App />
+                    </StaticRouter>
+                </FetchContext.Provider>
+            </ServerConfigContext.Provider>
         )
 
-        const initialState = await getInitialState({ App: serverApp, client: fetchClient })
+        let initialState: object = {}
+
+        try {
+            initialState = await getInitialState({ App: serverApp, client: fetchClient })
+        } catch (error) {
+            // This error is generated and catched again further down the line.
+        }
 
         const initialStateScript = `window.__INITIAL_STATE__=${JSON.stringify(initialState).replace(/</g, '\\u003c')};`
 
-        let didError = false
         const { pipe } = renderToPipeableStream(serverApp, {
             bootstrapScriptContent: initialStateScript,
             bootstrapModules: [manifest.main.js],
             onShellReady: async () => {
+                res.status(context.statusCode || 200)
                 res.setHeader('content-type', 'text/html')
-                res.status(didError ? 500 : 200)
+
                 pipe(res)
             },
             onShellError(error) {
-                // console.error(error)l
                 res.statusCode = 500
+
                 res.setHeader('content-type', 'text/html')
-                res.send('<h1>Something went wrong</h1>')
+                res.write(`<h1>Something went wrong</h1>`)
+
+                if (error instanceof Error) {
+                    res.write(`<pre>${error.stack}</pre>`)
+                }
+
+                res.end()
             },
             onError(error) {
                 console.error(error)
-                didError = true
-                res.statusCode = 500
-                res.setHeader('content-type', 'text/html')
-                res.send('<h1>Something went wrong</h1>')
             },
         })
     } catch (error) {
