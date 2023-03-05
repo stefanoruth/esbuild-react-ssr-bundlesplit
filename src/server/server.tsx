@@ -55,7 +55,7 @@ app.use(async (req, res, next) => {
             ssrMode: true,
         })
 
-        const manifest = JSON.parse(
+        const manifest: Record<string, { js: string; css?: string }> = JSON.parse(
             (await fs.readFile(path.join(__dirname, '../client/manifest.json'))).toString('utf-8')
         )
 
@@ -83,7 +83,7 @@ app.use(async (req, res, next) => {
 
         const { pipe } = renderToPipeableStream(serverApp, {
             bootstrapScriptContent: initialStateScript,
-            bootstrapModules: [manifest.main.js],
+            bootstrapModules: [manifest['src/client/main.tsx'].js],
             onShellReady: async () => {
                 res.status(context.statusCode || 200)
                 res.setHeader('content-type', 'text/html')
