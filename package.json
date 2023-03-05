@@ -44,6 +44,7 @@
         "ext": "ts,tsx",
         "exec": "yarn dev",
         "watch": [
+            "esbuild.mjs",
             "src/**"
         ]
     }
